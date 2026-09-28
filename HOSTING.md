@@ -14,6 +14,8 @@ neprovedou.
 
 - malý **VPS** (nejlevnější instance kdekoli bohatě stačí; server je nenáročný),
 - **domácí server**, NAS s Dockerem, nebo Raspberry Pi,
+- **Azure Container Apps**, pokud nechcete spravovat žádný stroj (návod
+  v README, sekce „Alternativa: Azure Container Apps"),
 - jakýkoli stroj, který stejně nikdy nevypínáte.
 
 Běžné **PC nebo notebook funguje také** — nic v projektu na tom nezávisí — jen
@@ -39,6 +41,8 @@ do nothing.
 
 - a small **VPS** (the cheapest instance anywhere is plenty; the server is tiny),
 - a **home server**, a NAS that runs Docker, or a Raspberry Pi,
+- **Azure Container Apps**, if you would rather not look after any machine
+  (see "Alternative: Azure Container Apps" in the README),
 - any machine you never switch off anyway.
 
 A regular **PC or laptop works too** — nothing in the project depends on the

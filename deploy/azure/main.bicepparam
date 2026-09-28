@@ -3,7 +3,7 @@
 using './main.bicep'
 
 param appName = readEnvironmentVariable('AZURE_APP_NAME', 'kt-mcp')
-param imageTag = readEnvironmentVariable('IMAGE_TAG', '')
+param image = readEnvironmentVariable('AZURE_IMAGE')
 param publicUrl = readEnvironmentVariable('AZURE_PUBLIC_URL', '')
 
 param ktEmail = readEnvironmentVariable('KT_EMAIL')

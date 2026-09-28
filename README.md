@@ -207,17 +207,34 @@ Pokud nechcete spravovat vlastní stroj, `deploy/azure/` nasadí server do
 Azure Container Apps. HTTPS zajistí Azure, takže odpadá nginx i Cloudflare
 tunel. Potřebujete jen [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)
 (verze 2.53 nebo novější) a `KT_EMAIL`, `KT_PASSWORD` a `MCP_AUTH_PASSWORD`
-v `.env` nebo v prostředí:
+v `.env` nebo v prostředí. Lokální Docker potřeba není.
+
+**Image se staví na GitHubu, ne v Azure.** Workflow
+`.github/workflows/image.yml` po každém pushi do `main` sestaví image a nahraje
+ho do GitHub Container Registry jako `ghcr.io/honzajscz/kt-mcp:sha-<commit>`
+(a u `main` i jako `:latest`). Registr je zdarma, takže v Azure odpadá placený
+Container Registry. Pro jinou větev spusťte workflow ručně (Actions → Build
+image → Run workflow).
+
+Jednou po prvním buildu přepněte balíček na veřejný: na GitHubu v profilu
+nebo repozitáři otevřete Packages → `kt-mcp` → Package settings → Change
+visibility → Public. Azure ho pak stahuje bez přihlašování. V image nejsou
+žádné tajné hodnoty (ty dostává kontejner až za běhu) a lokální `data/`
+s tokeny je v `.dockerignore`.
+
+Nasazení:
 
 ```bash
+git push                    # počkejte, až workflow „Build image" doběhne
 az login
 ./deploy/azure/deploy.sh
 ```
 
-Skript vytvoří resource group, registr, úložiště a prostředí, sestaví image
-přímo v Azure (`az acr build`, lokální Docker není potřeba), nasadí aplikaci
-a spustí `scripts/verify-deployment.sh`. Na konci vypíše URL konektoru. Nová
-verze se nasazuje stejným příkazem.
+Skript nasadí image právě checkoutnutého commitu. Nejdřív ověří, že na
+ghcr.io existuje a je veřejný, a když ne, řekne proč. Pak vytvoří resource
+group, úložiště, prostředí a aplikaci, spustí `scripts/verify-deployment.sh`
+a vypíše URL konektoru. Necommitnuté změny se nenasadí. Nová verze se
+nasazuje stejně: push, počkat na build, spustit skript.
 
 Co šablona `deploy/azure/main.bicep` nastavuje a proč:
 
@@ -234,9 +251,22 @@ Co šablona `deploy/azure/main.bicep` nastavuje a proč:
   musí se tohle nastavení upravit.
 
 Volitelné proměnné: `AZURE_RESOURCE_GROUP` (výchozí `kt-mcp`),
-`AZURE_LOCATION` (`westeurope`), `AZURE_APP_NAME` (`kt-mcp`) a
-`AZURE_PUBLIC_URL`. Náklady jsou řádově jednotky dolarů měsíčně, většinu tvoří
-registr (tier Basic).
+`AZURE_LOCATION` (`westeurope`), `AZURE_APP_NAME` (`kt-mcp`),
+`AZURE_PUBLIC_URL`, `AZURE_IMAGE_REPO` (výchozí `ghcr.io/honzajscz/kt-mcp`,
+pro fork změňte na svůj) a `AZURE_IMAGE` (celá reference image, přebije
+repozitář i tag commitu). Náklady jsou řádově jednotky dolarů měsíčně a téměř
+celé jdou za stále běžící repliku. Úložiště a logy stojí centy.
+
+**Přechod ze starší verze s Azure Container Registry.** Šablona registr ani
+jeho identitu už nevytváří, ale z resource group je sama nesmaže. Po prvním
+úspěšném nasazení novým skriptem je smažte ručně (dřív ne, do té doby z nich
+aplikace stahuje image):
+
+```bash
+az acr list -g kt-mcp --query "[].name" -o tsv     # vypíše ktmcp<něco>
+az acr delete -g kt-mcp -n <název-registru> --yes
+az identity delete -g kt-mcp -n kt-mcp-identity
+```
 
 **Vlastní doména.** Bez ní server běží na
 `https://kt-mcp.<něco>.<region>.azurecontainerapps.io`. Pro vlastní doménu
@@ -258,7 +288,8 @@ Pokud při vlastním hostování narazíte, založte [GitHub issue](../../issues
 rád pomůžu, od toho issue tracker je.
 
 Vlastní hosting potřebuje stroj, který běží nepřetržitě (viz
-[HOSTING.md](HOSTING.md)), a účet u Cloudflare. Pokud nemáte kde server
+[HOSTING.md](HOSTING.md)), a účet u Cloudflare, případně místo obojího
+předplatné Azure. Pokud nemáte kde server
 provozovat, ozvěte se na **kt-mcp@stanwhy.me** a něco vymyslíme — jen počítejte
 s tím, že provoz privátní instance znamená reálné náklady na server, které by
 šly za vámi.

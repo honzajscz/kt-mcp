@@ -1,12 +1,10 @@
 // Azure deployment for kt-mcp: one Container App behind Azure's managed
 // HTTPS ingress, with OAuth state persisted on an Azure Files share.
 //
-// Deployed in two passes by deploy.sh:
-//   1. imageTag empty  → registry, identity, storage, environment
-//   2. imageTag set    → the Container App itself, pulling that tag
-// The split exists because the image has to be built into the registry before
-// the app can pull it, and it gives the AcrPull role assignment time to
-// propagate before the first pull.
+// The image is not built here. GitHub Actions (.github/workflows/image.yml)
+// publishes it to GitHub Container Registry as a public package, so the app
+// pulls it anonymously and no Azure Container Registry (or the identity and
+// role assignment it would need) is paid for.
 //
 // No nginx and no Cloudflare tunnel: the Container Apps ingress terminates
 // TLS and is exactly one proxy hop, which matches `trust proxy 1` in
@@ -23,8 +21,9 @@ param location string = resourceGroup().location
 @maxLength(32)
 param appName string = 'kt-mcp'
 
-@description('Image tag in the registry to run. Leave empty to deploy only the infrastructure.')
-param imageTag string = ''
+@description('Full image reference to run, e.g. ghcr.io/owner/kt-mcp:sha-1234567. Must be publicly pullable. Use an immutable tag: redeploying the same reference does not pull a newer image.')
+@minLength(1)
+param image string
 
 @description('Public HTTPS URL of the server, no path or trailing slash. Leave empty to use the Container App\'s default hostname. Set it only after binding a custom domain to the app.')
 param publicUrl string = ''
@@ -43,37 +42,8 @@ param ktPassword string
 param mcpAuthPassword string
 
 var suffix = uniqueString(resourceGroup().id)
-var deployApp = !empty(imageTag)
 var stateShareName = 'kt-mcp-state'
 var envStorageName = 'state'
-// Built-in AcrPull role.
-var acrPullRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-
-resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
-  name: 'ktmcp${suffix}'
-  location: location
-  sku: { name: 'Basic' }
-  properties: {
-    // Pulls authenticate with the managed identity below, never a password.
-    adminUserEnabled: false
-  }
-}
-
-resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: '${appName}-identity'
-  location: location
-}
-
-resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(registry.id, identity.id, acrPullRoleId)
-  scope: registry
-  properties: {
-    roleDefinitionId: acrPullRoleId
-    principalId: identity.properties.principalId
-    principalType: 'ServicePrincipal'
-  }
-}
-
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: 'ktmcp${suffix}'
   location: location
@@ -141,18 +111,14 @@ resource environmentStorage 'Microsoft.App/managedEnvironments/storages@2024-03-
 var defaultHostname = '${appName}.${environment.properties.defaultDomain}'
 var resolvedPublicUrl = empty(publicUrl) ? 'https://${defaultHostname}' : publicUrl
 
-resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
+resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
+  // Explicit, so a redeploy over the older ACR-based template detaches the
+  // pull identity it used before that identity is deleted.
   identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: {
-      '${identity.id}': {}
-    }
+    type: 'None'
   }
-  dependsOn: [
-    acrPull
-  ]
   properties: {
     managedEnvironmentId: environment.id
     configuration: {
@@ -165,12 +131,6 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
         transport: 'auto'
         allowInsecure: false
       }
-      registries: [
-        {
-          server: registry.properties.loginServer
-          identity: identity.id
-        }
-      ]
       secrets: [
         { name: 'kt-email', value: ktEmail }
         { name: 'kt-password', value: ktPassword }
@@ -181,7 +141,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
       containers: [
         {
           name: 'kt-mcp'
-          image: '${registry.properties.loginServer}/kt-mcp:${imageTag}'
+          image: image
           resources: {
             cpu: json('0.25')
             memory: '0.5Gi'
@@ -235,8 +195,6 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
   }
 }
 
-output registryName string = registry.name
-output registryLoginServer string = registry.properties.loginServer
 output publicUrl string = resolvedPublicUrl
 output mcpEndpoint string = '${resolvedPublicUrl}/mcp'
 output defaultHostname string = defaultHostname

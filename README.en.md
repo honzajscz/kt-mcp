@@ -209,17 +209,34 @@ server to Azure Container Apps. Azure terminates HTTPS, so there is no nginx
 and no Cloudflare tunnel. All you need is the
 [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) (2.53 or
 newer) and `KT_EMAIL`, `KT_PASSWORD` and `MCP_AUTH_PASSWORD` in `.env` or in
-the environment:
+the environment. No local Docker needed.
+
+**The image is built on GitHub, not in Azure.** The
+`.github/workflows/image.yml` workflow builds every push to `main` and pushes
+it to GitHub Container Registry as `ghcr.io/honzajscz/kt-mcp:sha-<commit>`
+(plus `:latest` for `main`). The registry is free, so there is no paid Azure
+Container Registry. To build another branch, run the workflow by hand
+(Actions → Build image → Run workflow).
+
+Once, after the first build, make the package public: on GitHub open
+Packages → `kt-mcp` → Package settings → Change visibility → Public. Azure
+then pulls it without credentials. The image holds no secrets (the container
+gets them at runtime) and the local `data/` with tokens is in `.dockerignore`.
+
+To deploy:
 
 ```bash
+git push                    # wait for the "Build image" workflow to finish
 az login
 ./deploy/azure/deploy.sh
 ```
 
-The script creates the resource group, registry, storage and environment,
-builds the image inside Azure (`az acr build`, no local Docker needed), deploys
-the app and runs `scripts/verify-deployment.sh`. It finishes by printing the
-connector URL. Ship a new version by running the same command again.
+The script deploys the image of the checked-out commit. It first checks that
+the image exists on ghcr.io and is public, and says why if it is not. It then
+creates the resource group, storage, environment and app, runs
+`scripts/verify-deployment.sh` and prints the connector URL. Uncommitted
+changes are not deployed. Ship a new version the same way: push, wait for the
+build, run the script.
 
 What `deploy/azure/main.bicep` sets up, and why:
 
@@ -236,9 +253,23 @@ What `deploy/azure/main.bicep` sets up, and why:
   that setting has to change.
 
 Optional variables: `AZURE_RESOURCE_GROUP` (default `kt-mcp`),
-`AZURE_LOCATION` (`westeurope`), `AZURE_APP_NAME` (`kt-mcp`) and
-`AZURE_PUBLIC_URL`. Expect a few dollars a month, most of it the Basic-tier
-registry.
+`AZURE_LOCATION` (`westeurope`), `AZURE_APP_NAME` (`kt-mcp`),
+`AZURE_PUBLIC_URL`, `AZURE_IMAGE_REPO` (default `ghcr.io/honzajscz/kt-mcp`;
+point it at your own for a fork) and `AZURE_IMAGE` (a full image reference,
+overriding both the repository and the commit tag). Expect a few dollars a
+month, nearly all of it the always-on replica. Storage and logs cost cents.
+
+**Moving from the older version with Azure Container Registry.** The template
+no longer creates the registry or its identity, but it does not delete them
+from the resource group either. Once the new script has deployed successfully,
+delete them by hand (not before: until then the app pulls its image from
+there):
+
+```bash
+az acr list -g kt-mcp --query "[].name" -o tsv     # prints ktmcp<something>
+az acr delete -g kt-mcp -n <registry-name> --yes
+az identity delete -g kt-mcp -n kt-mcp-identity
+```
 
 **Custom domain.** Without one the server runs at
 `https://kt-mcp.<something>.<region>.azurecontainerapps.io`. For your own
@@ -260,7 +291,8 @@ If you hit a wall self-hosting, open a [GitHub issue](../../issues) — happy to
 help you get unstuck, that's what the issue tracker is for.
 
 Self-hosting does need a machine that is always on (see
-[HOSTING.md](HOSTING.md)) and a Cloudflare account. If you have no way to run
+[HOSTING.md](HOSTING.md)) and a Cloudflare account, or an Azure subscription
+instead of both. If you have no way to run
 it at all, you can reach me at **kt-mcp@stanwhy.me** and we can figure
 something out — just know that running a private instance means real server
 costs, which would be yours to cover.
