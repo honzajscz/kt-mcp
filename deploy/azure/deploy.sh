@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Deploys kt-mcp to Azure Container Apps. Idempotent: rerun it to ship a new
-# build of the current checkout.
+# Deploys kt-mcp to Azure Container Apps by hand. Normally GitHub Actions does
+# this on every push to main (.github/workflows/deploy.yml); this script is the
+# fallback. It deploys an image that already exists on ghcr.io.
 #
 #   az login
-#   ./deploy/azure/deploy.sh
+#   ./deploy/azure/deploy.sh                                   # :latest
+#   IMAGE=ghcr.io/honzajscz/kt-mcp:sha-abc1234 ./deploy/azure/deploy.sh
 #
 # KT_EMAIL, KT_PASSWORD and MCP_AUTH_PASSWORD come from the environment or from
 # .env in the repository root. They reach Azure through main.bicepparam, never
@@ -41,27 +43,14 @@ location="${AZURE_LOCATION:-westeurope}"
 export AZURE_APP_NAME="${AZURE_APP_NAME:-kt-mcp}"
 export AZURE_PUBLIC_URL="${AZURE_PUBLIC_URL:-}"
 
-tag="$(git -C "$root" rev-parse --short HEAD 2>/dev/null || echo local)-$(date -u +%Y%m%d%H%M%S)"
+export GHCR_USERNAME="${GHCR_USERNAME:-}" GHCR_TOKEN="${GHCR_TOKEN:-}"
+# The image is built by GitHub Actions into ghcr.io; this deploys one of those.
+export IMAGE="${IMAGE:-ghcr.io/honzajscz/kt-mcp:latest}"
 
 echo "==> Resource group $resource_group ($location)"
 az group create --name "$resource_group" --location "$location" --output none
 
-# Pass 1: everything except the app, so the registry exists to build into.
-echo "==> Infrastructure"
-export IMAGE_TAG=""
-registry=$(az deployment group create \
-  --resource-group "$resource_group" \
-  --name kt-mcp-infra \
-  --parameters "$here/main.bicepparam" \
-  --query properties.outputs.registryName.value \
-  --output tsv)
-
-echo "==> Building kt-mcp:$tag in $registry"
-az acr build --registry "$registry" --image "kt-mcp:$tag" "$root"
-
-# Pass 2: the app, pulling the image just built.
-echo "==> Container App"
-export IMAGE_TAG="$tag"
+echo "==> Deploying $IMAGE"
 public_url=$(az deployment group create \
   --resource-group "$resource_group" \
   --name kt-mcp-app \

@@ -3,7 +3,9 @@
 using './main.bicep'
 
 param appName = readEnvironmentVariable('AZURE_APP_NAME', 'kt-mcp')
-param imageTag = readEnvironmentVariable('IMAGE_TAG', '')
+param image = readEnvironmentVariable('IMAGE', '')
+param registryUsername = readEnvironmentVariable('GHCR_USERNAME', '')
+param registryPassword = readEnvironmentVariable('GHCR_TOKEN', '')
 param publicUrl = readEnvironmentVariable('AZURE_PUBLIC_URL', '')
 
 param ktEmail = readEnvironmentVariable('KT_EMAIL')

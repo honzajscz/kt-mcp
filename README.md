@@ -214,10 +214,18 @@ az login
 ./deploy/azure/deploy.sh
 ```
 
-Skript vytvoří resource group, registr, úložiště a prostředí, sestaví image
-přímo v Azure (`az acr build`, lokální Docker není potřeba), nasadí aplikaci
-a spustí `scripts/verify-deployment.sh`. Na konci vypíše URL konektoru. Nová
-verze se nasazuje stejným příkazem.
+Image sestavuje GitHub Actions (`.github/workflows/deploy.yml`) při každém
+pushi do `main` a ukládá ho do GitHub Container Registry
+(`ghcr.io/<vlastník>/kt-mcp`). Když jsou v repozitáři nastavené proměnné
+`AZURE_CLIENT_ID`, `AZURE_TENANT_ID` a `AZURE_SUBSCRIPTION_ID` (přihlášení
+přes OIDC, bez hesla) a v prostředí `azure` secrets `KT_EMAIL`, `KT_PASSWORD`
+a `MCP_AUTH_PASSWORD`, workflow image rovnou nasadí. Bez nich se jen sestaví.
+Soukromý image potřebuje ještě secret `GHCR_PULL_TOKEN` (token jen se scope
+`read:packages`); veřejný ne.
+
+Skript `deploy.sh` je ruční záloha: vytvoří resource group, úložiště
+a prostředí, nasadí image z ghcr.io (výchozí `:latest`, jiný přes `IMAGE=...`)
+a spustí `scripts/verify-deployment.sh`. Na konci vypíše URL konektoru.
 
 Co šablona `deploy/azure/main.bicep` nastavuje a proč:
 
@@ -235,8 +243,8 @@ Co šablona `deploy/azure/main.bicep` nastavuje a proč:
 
 Volitelné proměnné: `AZURE_RESOURCE_GROUP` (výchozí `kt-mcp`),
 `AZURE_LOCATION` (`westeurope`), `AZURE_APP_NAME` (`kt-mcp`) a
-`AZURE_PUBLIC_URL`. Náklady jsou řádově jednotky dolarů měsíčně, většinu tvoří
-registr (tier Basic).
+`AZURE_PUBLIC_URL`. Náklady jsou řádově jednotky dolarů měsíčně za běh jedné
+repliky; registr na ghcr.io je v rámci bezplatných limitů GitHubu.
 
 **Vlastní doména.** Bez ní server běží na
 `https://kt-mcp.<něco>.<region>.azurecontainerapps.io`. Pro vlastní doménu

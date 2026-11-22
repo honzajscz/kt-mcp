@@ -1,12 +1,9 @@
 // Azure deployment for kt-mcp: one Container App behind Azure's managed
 // HTTPS ingress, with OAuth state persisted on an Azure Files share.
 //
-// Deployed in two passes by deploy.sh:
-//   1. imageTag empty  → registry, identity, storage, environment
-//   2. imageTag set    → the Container App itself, pulling that tag
-// The split exists because the image has to be built into the registry before
-// the app can pull it, and it gives the AcrPull role assignment time to
-// propagate before the first pull.
+// The image is built by GitHub Actions (.github/workflows/deploy.yml) and
+// pushed to GitHub Container Registry (ghcr.io); no Azure Container Registry.
+// With `image` empty only the infrastructure is deployed.
 //
 // No nginx and no Cloudflare tunnel: the Container Apps ingress terminates
 // TLS and is exactly one proxy hop, which matches `trust proxy 1` in
@@ -23,8 +20,15 @@ param location string = resourceGroup().location
 @maxLength(32)
 param appName string = 'kt-mcp'
 
-@description('Image tag in the registry to run. Leave empty to deploy only the infrastructure.')
-param imageTag string = ''
+@description('Full image reference to run, e.g. ghcr.io/honzajscz/kt-mcp:sha-abc1234. Leave empty to deploy only the infrastructure.')
+param image string = ''
+
+@description('ghcr.io user for a private image. Leave empty for a public image.')
+param registryUsername string = ''
+
+@description('GitHub token with only read:packages, for pulling a private image.')
+@secure()
+param registryPassword string = ''
 
 @description('Public HTTPS URL of the server, no path or trailing slash. Leave empty to use the Container App\'s default hostname. Set it only after binding a custom domain to the app.')
 param publicUrl string = ''
@@ -43,35 +47,13 @@ param ktPassword string
 param mcpAuthPassword string
 
 var suffix = uniqueString(resourceGroup().id)
-var deployApp = !empty(imageTag)
+var deployApp = !empty(image)
+var privateImage = !empty(registryUsername) && !empty(registryPassword)
 var stateShareName = 'kt-mcp-state'
 var envStorageName = 'state'
-// Built-in AcrPull role.
-var acrPullRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-
-resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
-  name: 'ktmcp${suffix}'
-  location: location
-  sku: { name: 'Basic' }
-  properties: {
-    // Pulls authenticate with the managed identity below, never a password.
-    adminUserEnabled: false
-  }
-}
-
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: '${appName}-identity'
   location: location
-}
-
-resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(registry.id, identity.id, acrPullRoleId)
-  scope: registry
-  properties: {
-    roleDefinitionId: acrPullRoleId
-    principalId: identity.properties.principalId
-    principalType: 'ServicePrincipal'
-  }
 }
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
@@ -150,9 +132,6 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
       '${identity.id}': {}
     }
   }
-  dependsOn: [
-    acrPull
-  ]
   properties: {
     managedEnvironmentId: environment.id
     configuration: {
@@ -165,23 +144,24 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
         transport: 'auto'
         allowInsecure: false
       }
-      registries: [
+      registries: privateImage ? [
         {
-          server: registry.properties.loginServer
-          identity: identity.id
+          server: 'ghcr.io'
+          username: registryUsername
+          passwordSecretRef: 'ghcr-token'
         }
-      ]
-      secrets: [
+      ] : []
+      secrets: concat(privateImage ? [{ name: 'ghcr-token', value: registryPassword }] : [], [
         { name: 'kt-email', value: ktEmail }
         { name: 'kt-password', value: ktPassword }
         { name: 'mcp-auth-password', value: mcpAuthPassword }
-      ]
+      ])
     }
     template: {
       containers: [
         {
           name: 'kt-mcp'
-          image: '${registry.properties.loginServer}/kt-mcp:${imageTag}'
+          image: image
           resources: {
             cpu: json('0.25')
             memory: '0.5Gi'
@@ -235,8 +215,6 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
   }
 }
 
-output registryName string = registry.name
-output registryLoginServer string = registry.properties.loginServer
 output publicUrl string = resolvedPublicUrl
 output mcpEndpoint string = '${resolvedPublicUrl}/mcp'
 output defaultHostname string = defaultHostname
