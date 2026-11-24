@@ -9,6 +9,11 @@ on:
     paths-ignore: ['**.md']
   pull_request:
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: Nasadit do Azure
+        type: boolean
+        default: true
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -56,7 +61,10 @@ jobs:
 
   deploy:
     needs: build
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.AZURE_CLIENT_ID != ''
+    # Environment variables (AZURE_*) are not visible at job level, so the
+    # gate is a manual run, or every push once DEPLOY_ON_PUSH=true is set as a
+    # repository variable.
+    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.deploy) || (github.event_name == 'push' && vars.DEPLOY_ON_PUSH == 'true'))
     runs-on: ubuntu-latest
     environment: azure
     permissions:

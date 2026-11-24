@@ -216,10 +216,11 @@ az login
 
 Image sestavuje GitHub Actions (`.github/workflows/deploy.yml`) při každém
 pushi do `main` a ukládá ho do GitHub Container Registry
-(`ghcr.io/<vlastník>/kt-mcp`). Když jsou v repozitáři nastavené proměnné
-`AZURE_CLIENT_ID`, `AZURE_TENANT_ID` a `AZURE_SUBSCRIPTION_ID` (přihlášení
-přes OIDC, bez hesla) a v prostředí `azure` secrets `KT_EMAIL`, `KT_PASSWORD`
-a `MCP_AUTH_PASSWORD`, workflow image rovnou nasadí. Bez nich se jen sestaví.
+(`ghcr.io/<vlastník>/kt-mcp`). Nasazení: v prostředí `azure` nastavte proměnné `AZURE_CLIENT_ID`,
+`AZURE_TENANT_ID` a `AZURE_SUBSCRIPTION_ID` (přihlášení přes OIDC, bez hesla)
+a secrets `KT_EMAIL`, `KT_PASSWORD` a `MCP_AUTH_PASSWORD`, pak Actions, Run
+workflow. Automaticky při každém pushi až s proměnnou repozitáře
+`DEPLOY_ON_PUSH=true`.
 Soukromý image potřebuje ještě secret `GHCR_PULL_TOKEN` (token jen se scope
 `read:packages`); veřejný ne.
 
