@@ -9,6 +9,8 @@ RUN npm run build
 
 # Runtime stage — production dependencies only.
 FROM node:24-alpine AS runtime
+# Links the ghcr.io package to this repo, so GITHUB_TOKEN may push to it.
+LABEL org.opencontainers.image.source="https://github.com/honzajscz/kt-mcp"
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./
