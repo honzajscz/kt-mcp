@@ -216,10 +216,20 @@ az login
 ./deploy/azure/deploy.sh
 ```
 
-The script creates the resource group, registry, storage and environment,
-builds the image inside Azure (`az acr build`, no local Docker needed), deploys
-the app and runs `scripts/verify-deployment.sh`. It finishes by printing the
-connector URL. Ship a new version by running the same command again.
+GitHub Actions (`.github/workflows/deploy.yml`) builds the image on every push
+to `main` and pushes it to GitHub Container Registry (`ghcr.io/<owner>/kt-mcp`).
+To deploy, set the variables `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and
+`AZURE_SUBSCRIPTION_ID` (OIDC sign-in, no password) and the secrets `KT_EMAIL`,
+`KT_PASSWORD` and `MCP_AUTH_PASSWORD` in an `azure` environment, then Actions,
+Run workflow. Every push deploys once the repository variable
+`DEPLOY_ON_PUSH=true` is set. A private image also
+needs a `GHCR_PULL_TOKEN` secret (a token with only `read:packages`); a public
+one doesn't.
+
+`deploy.sh` is the manual fallback: it creates the resource group, storage and
+environment, deploys an image from ghcr.io (`:latest` by default, another via
+`IMAGE=...`) and runs `scripts/verify-deployment.sh`. It finishes by printing
+the connector URL.
 
 What `deploy/azure/main.bicep` sets up, and why:
 
@@ -237,8 +247,8 @@ What `deploy/azure/main.bicep` sets up, and why:
 
 Optional variables: `AZURE_RESOURCE_GROUP` (default `kt-mcp`),
 `AZURE_LOCATION` (`westeurope`), `AZURE_APP_NAME` (`kt-mcp`) and
-`AZURE_PUBLIC_URL`. Expect a few dollars a month, most of it the Basic-tier
-registry.
+`AZURE_PUBLIC_URL`. Expect a few dollars a month for the one replica; the
+ghcr.io registry fits in GitHub's free allowance.
 
 **Custom domain.** Without one the server runs at
 `https://kt-mcp.<something>.<region>.azurecontainerapps.io`. For your own

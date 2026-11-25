@@ -1,0 +1,100 @@
+# Builds the image into ghcr.io and deploys it to Azure Container Apps.
+# The deploy job runs only once the repository variable AZURE_CLIENT_ID is set
+# (see README, Azure section); until then the workflow only builds.
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Nasadit do Azure
+        type: boolean
+        default: true
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - id: meta
+        run: |
+          echo "base=${IMAGE_NAME,,}" >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE_NAME,,}:sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ steps.meta.outputs.image }}
+            ${{ steps.meta.outputs.base }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    # Environment variables (AZURE_*) are not visible at job level, so the
+    # gate is a manual run, or every push once DEPLOY_ON_PUSH=true is set as a
+    # repository variable.
+    if: github.ref == 'refs/heads/main' && ((github.event_name == 'workflow_dispatch' && inputs.deploy) || (github.event_name == 'push' && vars.DEPLOY_ON_PUSH == 'true'))
+    runs-on: ubuntu-latest
+    environment: azure
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          AZURE_APP_NAME: kt-mcp
+          AZURE_PUBLIC_URL: ${{ vars.AZURE_PUBLIC_URL }}
+          KT_EMAIL: ${{ secrets.KT_EMAIL }}
+          KT_PASSWORD: ${{ secrets.KT_PASSWORD }}
+          MCP_AUTH_PASSWORD: ${{ secrets.MCP_AUTH_PASSWORD }}
+          GHCR_USERNAME: ${{ github.repository_owner }}
+          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+        run: |
+          url=$(az deployment group create \
+            --resource-group "${{ vars.AZURE_RESOURCE_GROUP || 'kt-mcp' }}" \
+            --name kt-mcp-app \
+            --parameters deploy/azure/main.bicepparam \
+            --query properties.outputs.publicUrl.value --output tsv)
+          for _ in $(seq 1 30); do
+            curl -fsS --max-time 10 "$url/healthz" >/dev/null 2>&1 && break
+            sleep 5
+          done
+          ./scripts/verify-deployment.sh "$url"
